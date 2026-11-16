@@ -33,7 +33,20 @@ export type MediaKind = 'image' | 'video' | 'voice' | 'music';
 export type ImageEngineId =
   | 'local-sdxs'
   | 'local-sdxs-cfg'
-  | 'local-sdxs-img2img';
+  | 'local-sdxs-img2img'
+  | 'python-zimage-turbo'
+  | 'python-flux-klein'
+  | 'python-zimage-base'
+  | 'python-qwen-2512'
+  | 'python-moss-sft';
+
+export const PYTHON_ENGINE_IDS: ImageEngineId[] = [
+  'python-zimage-turbo',
+  'python-flux-klein',
+  'python-zimage-base',
+  'python-qwen-2512',
+  'python-moss-sft',
+];
 
 export interface CharacterProfile {
   id: string;

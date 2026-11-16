@@ -53,6 +53,71 @@ export const IMAGE_ENGINES: ImageEngineSpec[] = [
     defaultGuidance: 1.15,
     maxGuidance: 1.35,
   },
+  {
+    id: 'python-zimage-turbo',
+    name: 'Z-Image-Turbo (Python GPU)',
+    architecture: 'ZImagePipeline · Qwen3-4B Text Encoder · DiT',
+    ingredientsSummary: 'Apache-2.0 · 6B params · GPU required',
+    summary:
+      '6B DiT model with 8-step generation at 1024×1024. Zero CFG, zero negative prompts. Primary production model for fast, high-fidelity image generation. Requires GPU (Kaggle T4/P100 or production).',
+    supportsNegativePrompt: false,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: false,
+    defaultGuidance: 0,
+    maxGuidance: 0,
+  },
+  {
+    id: 'python-flux-klein',
+    name: 'FLUX.2-klein-4B (Python GPU)',
+    architecture: 'Flux2KleinPipeline · Qwen3-4B Text Encoder · Flux DiT',
+    ingredientsSummary: 'Apache-2.0 · 4B params · GPU required',
+    summary:
+      '4B Flux model with 4-step generation at up to 4MP resolution. CFG and negative prompts supported. Fast fallback for production generation. Requires GPU.',
+    supportsNegativePrompt: true,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: true,
+    defaultGuidance: 1.0,
+    maxGuidance: 4.0,
+  },
+  {
+    id: 'python-zimage-base',
+    name: 'Z-Image Base (Python GPU)',
+    architecture: 'ZImagePipeline · Qwen3-4B Text Encoder · DiT',
+    ingredientsSummary: 'Apache-2.0 · Base model · GPU required',
+    summary:
+      'Base Z-Image model with 50-step generation, CFG, and negative prompts at 1024×1024. Higher quality than Z-Image-Turbo but slower. Requires GPU.',
+    supportsNegativePrompt: true,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: true,
+    defaultGuidance: 5.0,
+    maxGuidance: 10.0,
+  },
+  {
+    id: 'python-qwen-2512',
+    name: 'Qwen-Image-2512 (Python GPU)',
+    architecture: 'QwenImagePipeline · Qwen2.5-VL-7B Text Encoder · MMDiT',
+    ingredientsSummary: 'Apache-2.0 · 20B params · 24-48GB VRAM required',
+    summary:
+      '20B MMDiT model with best-in-class fidelity. Requires 24-48GB VRAM production GPU. Does NOT fit Kaggle 16GB T4/P100. Disabled by default.',
+    supportsNegativePrompt: true,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: true,
+    defaultGuidance: 4.0,
+    maxGuidance: 10.0,
+  },
+  {
+    id: 'python-moss-sft',
+    name: 'MOSS-Image-SFT (Python GPU)',
+    architecture: 'DiffusionPipeline + pipeline_moss_image · DiT',
+    ingredientsSummary: 'Apache-2.0 · 5B params · GPU required',
+    summary:
+      '5B model optimized for text rendering and layout control. 50-step generation with CFG at 1024×1024. VAE in FP32. Requires GPU.',
+    supportsNegativePrompt: true,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: true,
+    defaultGuidance: 3.0,
+    maxGuidance: 10.0,
+  },
 ];
 
 export const CAMERA_FRAMING_OPTIONS = [
