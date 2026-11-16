@@ -1,0 +1,6 @@
+{
+  "name": "Auteur Studio",
+  "description": "Multimodal cinema and animation studio with text and audio prompt generation, AI music scoring, voice acting, automated subtitles, and a drag-and-drop timeline editor.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
