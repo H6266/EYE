@@ -118,7 +118,45 @@ export const STYLE_DIRECTIVES: Record<VisualStyle, string> = {
     'stylized 3D animated feature film frame, subsurface scattering, expressive stylized proportions, rich global illumination',
   watercolor:
     'hand-painted gouache and watercolor storybook illustration, soft paper grain, delicate ink accents',
+  bioluminescent:
+    'bioluminescent organisms glowing in deep darkness, ethereal neon flora, soft internal light emission, iridescent hues, magical atmospheric glow, photorealistic macro detail',
+  cyberpunk:
+    'cyberpunk neo-tokyo street at night, neon signage, rainy wet pavement reflections, chrome and chrome accents, synthwave color palette, high-contrast futuristic cityscape, 8k photorealistic',
+  macro:
+    'extreme macro photography, razor-sharp fine detail, microscopic texture, shallow depth of field, vivid natural colors, scientific illustration precision, 8k UHD',
+  steampunk:
+    'steampunk Victorian industrial aesthetic, brass fittings, copper pipes, clockwork gears, leather and steam, warm sepia tones, intricate mechanical detail, photorealistic',
+  'art-nouveau':
+    'art nouveau decorative style, flowing organic lines, elegant stylized figures, ornamental botanical motifs, soft pastel color palette, intricate line work, vintage poster art',
+  origami:
+    'origami paper craft art, folded paper geometry, crisp creases, layered papercraft diorama, soft studio lighting, pastel colors, miniature paper world, photorealistic',
+  gothic:
+    'gothic dark fantasy, ornate cathedral architecture, gargoyles, moonlight through stained glass, dark moody atmosphere, deep shadows, dramatic fantasy illustration, high detail',
+  minimalist:
+    'minimalist zen composition, abundant negative space, clean geometric shapes, muted earth tones, serene simplicity, balanced asymmetry, high-end editorial photography',
+  holographic:
+    'holographic iridescent surface, shimmering rainbow light refraction, futuristic chrome, pearlescent gradients, sci-fi interface glow, crystalline detail, 8k photorealistic',
+  infrared:
+    'infrared thermal photography, false-color heatmap, surreal dreamlike landscape, glowing foliage, deep sky contrast, scientific imaging aesthetic, ethereal atmosphere',
+  polaroid:
+    'vintage polaroid instant film, warm faded colors, soft vignette, slight film grain, nostalgic 1970s aesthetic, candid snapshot, soft focus edges',
+  isometric:
+    'isometric miniature diorama, tiny world perspective, clean 3D vector style, bright flat lighting, toy-like proportions, architectural model, crisp edges, vibrant colors',
 };
+
+export const QUALITY_PRESETS: Array<{ id: string; label: string; suffix: string }> = [
+  { id: 'standard', label: 'Standard', suffix: 'photorealistic, sharp focus, detailed' },
+  {
+    id: 'high',
+    label: 'High Detail',
+    suffix: 'ultra-detailed, 8k resolution, masterpiece, highly intricate, professional photography, crisp detail',
+  },
+  {
+    id: 'ultra',
+    label: 'Ultra Quality',
+    suffix: 'ultra-detailed, 8k UHD, masterpiece, award-winning photography, insanely intricate detail, sharp focus, cinematic lighting, photorealistic, trending on artstation',
+  },
+] as const;
 
 export function getDimensionsForAspect(
   aspectRatio: AspectRatio

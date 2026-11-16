@@ -1,23 +1,35 @@
 #!/usr/bin/env python3
 """
 AUTEUR STUDIO — IMAGE GENERATION BENCHMARK FRAMEWORK
-====================================================
+======================================================
 
 Shared framework for benchmarking lightweight open-weight image generation models
-against SDXS-512 baseline. Designed to run on Kaggle GPU notebooks (T4x2 16GB VRAM).
+against SDXS-512 baseline. Designed to run on Kaggle GPU notebooks (T4/P100 16GB VRAM).
 
-Usage: Import BENCHMARK_PROMPTS and EVALUATION_CRITERIA into model-specific notebooks.
+Provides:
+- BENCHMARK_PROMPTS: 33 prompts with expected subjects, counts, colors, camera, lighting, environment
+- GenerationResult / ReviewRecord dataclasses
+- Real prompt-fidelity evaluation (human + optional VLM), NOT fabricated scores
+- Contact sheet generation
+- Human evaluation CSV + HTML review page
+- Anonymous model labels for blinded comparison
+- Results save/load
 """
 
 import json
 import time
 import os
+import csv
+import html
 from datetime import datetime
-from typing import Dict, List, Any
-from dataclasses import dataclass, asdict
+from typing import Dict, List, Any, Optional, Tuple
+from dataclasses import dataclass, asdict, field
+from PIL import Image, ImageDraw, ImageFont
 
 # =============================================================================
-# BENCHMARK PROMPTS (30+ prompts, 20 categories)
+# BENCHMARK PROMPTS (33 prompts, 20 categories)
+# Each prompt includes expected subjects, object counts, colors, camera angle,
+# lighting, environment — used for structured prompt-fidelity review.
 # =============================================================================
 
 BENCHMARK_PROMPTS = [
@@ -432,31 +444,73 @@ BENCHMARK_PROMPTS = [
     },
 ]
 
+PROMPT_LOOKUP = {p["id"]: p for p in BENCHMARK_PROMPTS}
+
+
+# =============================================================================
+# DATA STRUCTURES
+# =============================================================================
 
 @dataclass
 class GenerationResult:
     model_id: str
     prompt_id: str
-    image_path: str
-    generation_time_s: float
-    vram_peak_gb: float | None = None
-    error: str | None = None
+    category: str = ""
+    image_path: str = ""
+    generation_time_s: float = 0.0
+    vram_peak_gb: Optional[float] = None
+    ram_peak_gb: Optional[float] = None
+    error: Optional[str] = None
     metadata: Dict[str, Any] | None = None
 
 
 @dataclass
-class EvaluationResult:
+class ReviewRecord:
+    """
+    Structured review record for ONE generated image.
+    Filled by human evaluator (or optional VLM). Scores are NOT auto-fabricated.
+    """
     model_id: str
     prompt_id: str
-    subject_presence_score: float  # 0-1
-    object_count_accuracy: float  # 0-1
-    color_accuracy: float  # 0-1
-    composition_score: float  # 0-1
-    lighting_accuracy: float  # 0-1
-    environment_match: float  # 0-1
-    unwanted_elements: bool  # True if unwanted elements present
-    overall_accuracy: float  # 0-1
+    prompt: str
+    image_path: str
+    expected_subjects: List[str] = field(default_factory=list)
+    expected_objects_count: Dict[str, int] = field(default_factory=dict)
+    expected_colors: List[str] = field(default_factory=list)
+    camera_angle: str = ""
+    lighting: str = ""
+    environment: str = ""
+    generation_time_s: float = 0.0
+    vram_peak_gb: Optional[float] = None
+
+    # Human evaluation fields (filled by reviewer, NOT auto-filled)
+    subject_presence_score: Optional[float] = None      # 0-1, all requested subjects present?
+    object_count_accuracy: Optional[float] = None       # 0-1, correct object counts?
+    color_accuracy: Optional[float] = None              # 0-1, specified colors correct?
+    composition_score: Optional[float] = None           # 0-1, objects in requested positions?
+    lighting_accuracy: Optional[float] = None           # 0-1, lighting matches?
+    environment_match: Optional[float] = None           # 0-1, environment correct?
+    unwanted_elements: bool = False                     # hallucinated objects/people?
+    overall_accuracy: Optional[float] = None            # 0-1 holistic
     human_notes: str = ""
+    missing_details: List[str] = field(default_factory=list)
+    incorrect_details: List[str] = field(default_factory=list)
+    unwanted_additions: List[str] = field(default_factory=list)
+
+    # VLM evaluation (optional, NOT ground truth)
+    vlm_subject_presence: Optional[float] = None
+    vlm_object_count: Optional[float] = None
+    vlm_color_accuracy: Optional[float] = None
+    vlm_overall: Optional[float] = None
+    vlm_notes: str = ""
+    vlm_evaluated: bool = False
+
+
+@dataclass
+class AnonymousLabel:
+    """Maps real model ID to anonymous label for blinded human evaluation."""
+    model_id: str
+    anonymous_label: str  # e.g. "Model A", "Model B"
 
 
 # =============================================================================
@@ -479,32 +533,279 @@ def evaluate_generation(
     model_id: str,
     prompt_entry: Dict[str, Any],
     image_path: str,
-    vlm_evaluator=None,  # Optional local VLM for automated scoring
-    human_score: float | None = None,
-) -> EvaluationResult:
+    vlm_evaluator=None,
+    human_score: Optional[float] = None,
+) -> ReviewRecord:
     """
-    Evaluate a generated image against prompt requirements.
-    
-    If vlm_evaluator is provided, use it for automated scoring.
-    Otherwise, return a template for human evaluation.
+    Build a ReviewRecord for a generated image.
+
+    Scores are NOT auto-fabricated. All numeric fields default to None and must
+    be filled by a human evaluator (or optional VLM, clearly marked as such).
     """
-    if vlm_evaluator:
-        return vlm_evaluator.evaluate(model_id, prompt_entry, image_path)
-    
-    # Return human evaluation template
-    return EvaluationResult(
+    return ReviewRecord(
         model_id=model_id,
         prompt_id=prompt_entry["id"],
-        subject_presence_score=0.0,
-        object_count_accuracy=0.0,
-        color_accuracy=0.0,
-        composition_score=0.0,
-        lighting_accuracy=0.0,
-        environment_match=0.0,
-        unwanted_elements=False,
-        overall_accuracy=0.0,
+        prompt=prompt_entry["prompt"],
+        image_path=image_path,
+        expected_subjects=prompt_entry.get("expected_subjects", []),
+        expected_objects_count=prompt_entry.get("expected_objects_count", {}),
+        expected_colors=prompt_entry.get("expected_colors", []),
+        camera_angle=prompt_entry.get("camera_angle", ""),
+        lighting=prompt_entry.get("lighting", ""),
+        environment=prompt_entry.get("environment", ""),
         human_notes="PENDING HUMAN EVALUATION",
     )
+
+
+def review_record_to_csv_row(record: ReviewRecord, anonymous_label: Optional[str] = None) -> Dict[str, Any]:
+    """Flatten a ReviewRecord into a CSV row."""
+    model_label = anonymous_label if anonymous_label else record.model_id
+    return {
+        "anonymous_label": model_label,
+        "model_id": record.model_id,
+        "prompt_id": record.prompt_id,
+        "prompt": record.prompt,
+        "image_path": record.image_path,
+        "expected_subjects": ";".join(record.expected_subjects),
+        "expected_objects_count": json.dumps(record.expected_objects_count),
+        "expected_colors": ";".join(record.expected_colors),
+        "camera_angle": record.camera_angle,
+        "lighting": record.lighting,
+        "environment": record.environment,
+        "generation_time_s": record.generation_time_s,
+        "vram_peak_gb": record.vram_peak_gb,
+        "subject_presence_score": record.subject_presence_score,
+        "object_count_accuracy": record.object_count_accuracy,
+        "color_accuracy": record.color_accuracy,
+        "composition_score": record.composition_score,
+        "lighting_accuracy": record.lighting_accuracy,
+        "environment_match": record.environment_match,
+        "unwanted_elements": record.unwanted_elements,
+        "overall_accuracy": record.overall_accuracy,
+        "human_notes": record.human_notes,
+        "missing_details": ";".join(record.missing_details),
+        "incorrect_details": ";".join(record.incorrect_details),
+        "unwanted_additions": ";".join(record.unwanted_additions),
+        "vlm_subject_presence": record.vlm_subject_presence,
+        "vlm_object_count": record.vlm_object_count,
+        "vlm_color_accuracy": record.vlm_color_accuracy,
+        "vlm_overall": record.vlm_overall,
+        "vlm_evaluated": record.vlm_evaluated,
+        "vlm_notes": record.vlm_notes,
+    }
+
+
+# =============================================================================
+# CONTACT SHEET
+# =============================================================================
+
+def _load_font(size: int = 20) -> ImageFont.FreeTypeFont:
+    """Try to load a truetype font, fall back to default."""
+    for path in [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ]:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def make_contact_sheet(
+    image_entries: List[Tuple[str, str]],
+    output_path: str,
+    cols: int = 4,
+    thumb_size: Tuple[int, int] = (300, 300),
+    label_font_size: int = 16,
+):
+    """
+    Create a contact sheet showing generated images side by side with prompt IDs.
+
+    image_entries: list of (image_path, label) tuples.
+    """
+    if not image_entries:
+        return None
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    font = _load_font(label_font_size)
+    thumb_w, thumb_h = thumb_size
+    rows = (len(image_entries) + cols - 1) // cols
+    sheet_w = cols * (thumb_w + 20) + 40
+    sheet_h = rows * (thumb_h + 60) + 60
+
+    sheet = Image.new("RGB", (sheet_w, sheet_h), color=(30, 30, 30))
+    draw = ImageDraw.Draw(sheet)
+
+    for idx, (img_path, label) in enumerate(image_entries):
+        r = idx // cols
+        c = idx % cols
+        x = 20 + c * (thumb_w + 20)
+        y = 20 + r * (thumb_h + 60)
+
+        try:
+            img = Image.open(img_path).convert("RGB")
+            img.thumbnail((thumb_w, thumb_h))
+            # Paste centered on a black thumb-sized canvas
+            canvas = Image.new("RGB", (thumb_w, thumb_h), color=(0, 0, 0))
+            canvas.paste(img, ((thumb_w - img.size[0]) // 2, (thumb_h - img.size[1]) // 2))
+            sheet.paste(canvas, (x, y))
+        except Exception as e:
+            # Draw error placeholder
+            draw.rectangle([x, y, x + thumb_w, y + thumb_h], fill=(60, 0, 0))
+            draw.text((x + 10, y + 10), f"LOAD ERROR", fill=(255, 255, 255), font=font)
+
+        # Draw label below image
+        label_y = y + thumb_h + 5
+        draw.text((x, label_y), label, fill=(220, 220, 220), font=font)
+
+    sheet.save(output_path)
+    return output_path
+
+
+# =============================================================================
+# ANONYMOUS LABELS
+# =============================================================================
+
+def assign_anonymous_labels(model_ids: List[str]) -> List[AnonymousLabel]:
+    """
+    Assign anonymous labels (Model A, Model B, ...) to model IDs for blinded
+    human comparison. Reduces selection bias.
+    """
+    labels = []
+    for idx, mid in enumerate(sorted(set(model_ids))):
+        letter = chr(ord("A") + idx)
+        labels.append(AnonymousLabel(model_id=mid, anonymous_label=f"Model {letter}"))
+    return labels
+
+
+def get_anonymous_label(model_id: str, labels: List[AnonymousLabel]) -> str:
+    for l in labels:
+        if l.model_id == model_id:
+            return l.anonymous_label
+    return model_id
+
+
+# =============================================================================
+# HUMAN EVALUATION EXPORT (CSV + HTML)
+# =============================================================================
+
+def save_human_evaluation(
+    review_records: List[ReviewRecord],
+    csv_path: str,
+    html_path: str,
+    anonymous_labels: Optional[List[AnonymousLabel]] = None,
+):
+    """
+    Save human evaluation CSV and HTML review page from review records.
+    Includes all fields needed for human scoring.
+    """
+    os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(html_path) or ".", exist_ok=True)
+
+    # CSV
+    fieldnames = [
+        "anonymous_label", "model_id", "prompt_id", "prompt", "image_path",
+        "expected_subjects", "expected_objects_count", "expected_colors",
+        "camera_angle", "lighting", "environment",
+        "generation_time_s", "vram_peak_gb",
+        "subject_presence_score", "object_count_accuracy", "color_accuracy",
+        "composition_score", "lighting_accuracy", "environment_match",
+        "unwanted_elements", "overall_accuracy", "human_notes",
+        "missing_details", "incorrect_details", "unwanted_additions",
+        "vlm_subject_presence", "vlm_object_count", "vlm_color_accuracy",
+        "vlm_overall", "vlm_evaluated", "vlm_notes",
+    ]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in review_records:
+            row = review_record_to_csv_row(r, get_anonymous_label(r.model_id, anonymous_labels) if anonymous_labels else None)
+            writer.writerow(row)
+
+    # HTML review page
+    html_rows = []
+    for r in review_records:
+        anon = get_anonymous_label(r.model_id, anonymous_labels) if anonymous_labels else r.model_id
+        img_tag = f'<img src="{html.escape(r.image_path)}" width="220" alt="{r.prompt_id}" style="border:1px solid #444;"/>' if r.image_path and os.path.exists(r.image_path) else '<span style="color:#ff6b6b;">IMAGE NOT GENERATED</span>'
+        html_rows.append(f"""
+        <tr>
+            <td>{html.escape(anon)}</td>
+            <td>{html.escape(r.prompt_id)}</td>
+            <td>{html.escape(r.prompt[:120])}...</td>
+            <td>{img_tag}</td>
+            <td>{"; ".join(r.expected_subjects)}</td>
+            <td>{json.dumps(r.expected_objects_count)}</td>
+            <td>{"; ".join(r.expected_colors)}</td>
+            <td>{html.escape(r.camera_angle)}</td>
+            <td>{html.escape(r.lighting)}</td>
+            <td>{html.escape(r.environment)}</td>
+            <td>{r.subject_presence_score if r.subject_presence_score is not None else ""}</td>
+            <td>{r.object_count_accuracy if r.object_count_accuracy is not None else ""}</td>
+            <td>{r.color_accuracy if r.color_accuracy is not None else ""}</td>
+            <td>{r.composition_score if r.composition_score is not None else ""}</td>
+            <td>{r.lighting_accuracy if r.lighting_accuracy is not None else ""}</td>
+            <td>{r.environment_match if r.environment_match is not None else ""}</td>
+            <td>{"Yes" if r.unwanted_elements else "No"}</td>
+            <td>{r.overall_accuracy if r.overall_accuracy is not None else ""}</td>
+            <td>{html.escape(r.human_notes)}</td>
+            <td>{"; ".join(r.missing_details)}</td>
+            <td>{"; ".join(r.incorrect_details)}</td>
+            <td>{"; ".join(r.unwanted_additions)}</td>
+        </tr>
+        """)
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Human Prompt-Fidelity Evaluation</title>
+<style>
+  body {{ font-family: system-ui, -apple-system, sans-serif; margin: 20px; background: #1a1a1a; color: #eee; }}
+  h1 {{ color: #ffd700; }}
+  table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
+  th, td {{ border: 1px solid #444; padding: 8px; text-align: left; font-size: 13px; }}
+  th {{ background: #333; color: #ffd700; position: sticky; top: 0; }}
+  tr:nth-child(even) {{ background: #222; }}
+  img {{ display: block; max-width: 100%; height: auto; }}
+  .legend {{ margin: 20px 0; color: #888; font-size: 13px; }}
+  .anon-label {{ font-weight: bold; color: #ffd700; }}
+  .note {{ font-style: italic; color: #888; }}
+</style>
+</head>
+<body>
+<h1>Human Prompt-Fidelity Evaluation</h1>
+<p class="note">Generated: {datetime.now().isoformat()} | Total records: {len(review_records)}</p>
+<p class="legend">Anonymous labels (Model A, B, ...) hide real model identity to reduce selection bias.
+Scores 0-1 are filled by human evaluators. VLM columns are optional automated scores, NOT ground truth.</p>
+<table>
+<thead>
+<tr>
+<th>Anonymous Label</th><th>Prompt ID</th><th>Prompt (truncated)</th><th>Image</th>
+<th>Expected Subjects</th><th>Expected Object Counts</th><th>Expected Colors</th>
+<th>Camera Angle</th><th>Lighting</th><th>Environment</th>
+<th>Subject Presence (0-1)</th><th>Object Count (0-1)</th><th>Color Accuracy (0-1)</th>
+<th>Composition (0-1)</th><th>Lighting (0-1)</th><th>Environment (0-1)</th>
+<th>Unwanted Elements</th><th>Overall (0-1)</th><th>Human Notes</th>
+<th>Missing Details</th><th>Incorrect Details</th><th>Unwanted Additions</th>
+</tr>
+</thead>
+<tbody>
+{''.join(html_rows)}
+</tbody>
+</table>
+</body>
+</html>"""
+
+    with open(html_path, "w") as f:
+        f.write(html_content)
+
+    print(f"Human evaluation CSV: {csv_path}")
+    print(f"Human evaluation HTML: {html_path}")
+    return csv_path, html_path
 
 
 # =============================================================================
@@ -529,6 +830,24 @@ def load_results(filepath: str) -> List[Dict]:
     return data["results"]
 
 
+def save_review_records(records: List[ReviewRecord], filepath: str):
+    """Save review records to JSON."""
+    os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+    with open(filepath, "w") as f:
+        json.dump({
+            "timestamp": datetime.now().isoformat(),
+            "total_records": len(records),
+            "records": [asdict(r) for r in records],
+        }, f, indent=2)
+
+
+def load_review_records(filepath: str) -> List[ReviewRecord]:
+    """Load review records from JSON."""
+    with open(filepath) as f:
+        data = json.load(f)
+    return [ReviewRecord(**r) for r in data["records"]]
+
+
 def generate_comparison_table(all_results: Dict[str, List[Dict]]) -> str:
     """Generate markdown comparison table from all model results."""
     lines = [
@@ -536,10 +855,8 @@ def generate_comparison_table(all_results: Dict[str, List[Dict]]) -> str:
         "|" + "---|" * (len(all_results) + 1),
     ]
     metrics = [
-        "Image quality", "Prompt accuracy", "Photorealism", "Composition",
-        "Human realism", "Generation speed (s)", "VRAM usage (GB)", "Storage (GB)", "License",
+        "Success rate", "Avg generation time (s)", "Peak VRAM (GB)", "Prompt fidelity (human)",
     ]
-    # This is a template - fill with actual benchmark data
     for metric in metrics:
         values = " | ".join([""] * len(all_results))
         lines.append(f"| {metric} | {values} |")

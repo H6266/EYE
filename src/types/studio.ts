@@ -8,7 +8,19 @@ export type VisualStyle =
   | 'claymation'
   | 'noir'
   | 'pixar3d'
-  | 'watercolor';
+  | 'watercolor'
+  | 'bioluminescent'
+  | 'cyberpunk'
+  | 'macro'
+  | 'steampunk'
+  | 'art-nouveau'
+  | 'origami'
+  | 'gothic'
+  | 'minimalist'
+  | 'holographic'
+  | 'infrared'
+  | 'polaroid'
+  | 'isometric';
 
 export type TransitionType = 'cut' | 'crossfade' | 'wipe';
 

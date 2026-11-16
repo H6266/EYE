@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  Eye,
   Film,
   Image as ImageIcon,
   Loader2,
@@ -12,6 +13,7 @@ import {
   Upload,
   UserCheck,
   Wand2,
+  X,
 } from 'lucide-react';
 import {
   AspectRatio,
@@ -29,6 +31,7 @@ import {
   buildRichVisualPrompt,
   sanitizeNegativePrompt,
 } from '../utils/imagePromptBuilder';
+import { QUALITY_PRESETS } from '../data/imageEngines';
 
 interface GeneratePanelProps {
   visualAssets: MediaAsset[];
@@ -75,6 +78,18 @@ const STYLE_OPTIONS: Array<{ id: VisualStyle; label: string }> = [
   { id: 'watercolor', label: 'Watercolor' },
   { id: 'noir', label: 'Film Noir' },
   { id: 'original', label: 'Natural Studio' },
+  { id: 'bioluminescent', label: 'Bioluminescent Glow' },
+  { id: 'cyberpunk', label: 'Cyberpunk Neon' },
+  { id: 'macro', label: 'Macro Photography' },
+  { id: 'steampunk', label: 'Steampunk Brass' },
+  { id: 'art-nouveau', label: 'Art Nouveau' },
+  { id: 'origami', label: 'Origami Paper Craft' },
+  { id: 'gothic', label: 'Gothic Dark Fantasy' },
+  { id: 'minimalist', label: 'Minimalist Zen' },
+  { id: 'holographic', label: 'Holographic' },
+  { id: 'infrared', label: 'Infrared Thermal' },
+  { id: 'polaroid', label: 'Vintage Polaroid' },
+  { id: 'isometric', label: 'Isometric Diorama' },
 ];
 
 async function blobToBase64(blob: Blob): Promise<string> {
@@ -135,6 +150,7 @@ export function GeneratePanel({
   );
   const [style, setStyle] = useState<VisualStyle>('cinematic');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
+  const [qualityPreset, setQualityPreset] = useState('high');
   const [cameraFraming, setCameraFraming] = useState<string>('auto');
   const [lighting, setLighting] = useState<string>('auto');
   const [duration, setDuration] = useState(5);
@@ -174,6 +190,13 @@ export function GeneratePanel({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [suggestedNarration, setSuggestedNarration] = useState<string | null>(null);
   const [suggestedMusic, setSuggestedMusic] = useState<string | null>(null);
+
+  // Media preview modal (image or video)
+  const [preview, setPreview] = useState<{
+    url: string;
+    kind: 'image' | 'video';
+    title: string;
+  } | null>(null);
 
   const activeEngine =
     IMAGE_ENGINES.find((e) => e.id === engineId) || IMAGE_ENGINES[0];
@@ -330,6 +353,10 @@ export function GeneratePanel({
     );
   };
 
+  const openPreview = (url: string, kind: 'image' | 'video', title: string) => {
+    setPreview({ url, kind, title });
+  };
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prompt.trim() && !audioPromptData) {
@@ -407,6 +434,7 @@ export function GeneratePanel({
           createdAt: Date.now(),
         };
         onAddAsset(asset, true);
+        setPreview({ url: data.videoDataUrl, kind: 'video', title: asset.title });
         setStatusMessage('Video clip generated and appended to V1 timeline.');
         return;
       }
@@ -419,6 +447,13 @@ export function GeneratePanel({
         characterName: activeCharacter?.name,
         characterTraits: activeCharacter?.traits,
       });
+
+      const qualityPresetConfig = QUALITY_PRESETS.find(
+        (q) => q.id === qualityPreset
+      );
+      const enhancedPrompt =
+        composedPrompt +
+        (qualityPresetConfig ? `, ${qualityPresetConfig.suffix}` : '');
 
       let refPngBase64: string | undefined;
       if (mode === 'restyle' && referenceAssetId) {
@@ -437,7 +472,7 @@ export function GeneratePanel({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: composedPrompt,
+          prompt: enhancedPrompt,
           negativePrompt: sanitizeNegativePrompt(negativePrompt),
           engineId,
           style,
@@ -830,6 +865,27 @@ export function GeneratePanel({
           </select>
         </div>
 
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="gen-quality"
+            className="text-xs font-medium text-[#9BA1AE]"
+          >
+            Image Quality
+          </label>
+          <select
+            id="gen-quality"
+            value={qualityPreset}
+            onChange={(e) => setQualityPreset(e.target.value)}
+            className="bg-[#0E1013] border border-white/10 rounded-md px-2 py-1.5 text-xs text-[#F1F3F5] focus:outline-none focus:border-[#E5A93C]"
+          >
+            {QUALITY_PRESETS.map((q) => (
+              <option key={q.id} value={q.id}>
+                {q.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {mode === 'video' ? (
           <div className="flex flex-col gap-1">
             <label
@@ -990,6 +1046,17 @@ export function GeneratePanel({
         </div>
       )}
 
+      {preview?.kind === 'video' && (
+        <button
+          type="button"
+          onClick={() => openPreview(preview.url, 'video', preview.title)}
+          className="w-full py-2 px-4 rounded-md text-xs font-medium border border-white/10 text-[#C4C9D4] hover:text-white hover:border-white/25 mb-2 flex items-center justify-center gap-1.5"
+        >
+          <Eye className="w-3.5 h-3.5 shrink-0" />
+          <span>Preview Video</span>
+        </button>
+      )}
+
       <button
         type="submit"
         disabled={isGenerating}
@@ -1033,7 +1100,6 @@ export function GeneratePanel({
           </div>
         </div>
       )}
-
       {/* Generated Takes Gallery */}
       {recentTakes.length > 0 && (
         <div className="pt-2 border-t border-white/8 flex flex-col gap-2">
@@ -1058,21 +1124,80 @@ export function GeneratePanel({
                   <span className="truncate font-mono">
                     {take.seed ? `#${take.seed}` : take.modelLabel}
                   </span>
-                  <button
-                    type="button"
-                    title="Add take to V1 timeline"
-                    onClick={() => addTakeToStudio(take, true)}
-                    className="px-1.5 py-0.5 rounded bg-[#1D2129] text-[#E5A93C] hover:bg-[#E5A93C] hover:text-[#111317] flex items-center gap-0.5 shrink-0"
-                  >
-                    <Plus className="w-2.5 h-2.5" />
-                    <span>V1</span>
-                  </button>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      type="button"
+                      title="Preview take"
+                      onClick={() =>
+                        openPreview(take.imageDataUrl, 'image', take.prompt)
+                      }
+                      className="px-1.5 py-0.5 rounded bg-[#1D2129] text-[#E5A93C] hover:bg-[#E5A93C] hover:text-[#111317] flex items-center gap-0.5 shrink-0"
+                    >
+                      <Eye className="w-2.5 h-2.5" />
+                      <span>View</span>
+                    </button>
+                    <button
+                      type="button"
+                      title="Add take to V1 timeline"
+                      onClick={() => addTakeToStudio(take, true)}
+                      className="px-1.5 py-0.5 rounded bg-[#1D2129] text-[#E5A93C] hover:bg-[#E5A93C] hover:text-[#111317] flex items-center gap-0.5 shrink-0"
+                    >
+                      <Plus className="w-2.5 h-2.5" />
+                      <span>V1</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {/* Full-screen media preview modal */}
+      {preview && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setPreview(null)}
+        >
+          <div
+            className="bg-[#0E1013] border border-white/20 rounded-lg shadow-2xl max-w-2xl max-h-[90vh] flex flex-col items-center relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreview(null)}
+              className="absolute top-2 right-2 text-[#8E96A4] hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="text-xs text-[#8E96A4] mb-2 truncate max-w-[300px]">
+              {preview.title}
+            </div>
+            {preview.kind === 'image' ? (
+              <img
+                src={preview.url}
+                alt={preview.title}
+                className="max-w-full max-h-[60vh] object-contain rounded-md border border-white/10"
+              />
+            ) : (
+              <video
+                src={preview.url}
+                controls
+                autoPlay
+                className="max-w-full max-h-[60vh] rounded-md border border-white/10 bg-black"
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => setPreview(null)}
+              className="mt-3 px-3 py-1.5 rounded-md text-xs font-medium border border-white/10 text-[#C4C9D4] hover:text-white hover:border-white/25"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
     </form>
   );
 }
