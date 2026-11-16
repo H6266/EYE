@@ -66,6 +66,8 @@ export const INITIAL_TRACKS: TrackConfig[] = [
   { id: 'subtitle', label: 'Subtitles', shortCode: 'S1', muted: false, locked: false },
 ];
 
+export { loadOkwankyerɛfoPaProject } from './okwankyerefoPaProject';
+
 export const INITIAL_TIMELINE_CLIPS: TimelineClip[] = [
   {
     id: 'clip-v1',
