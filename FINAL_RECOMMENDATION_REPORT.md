@@ -1,5 +1,7 @@
 # FINAL RECOMMENDATION & REPORT
 
+> Historical pre-benchmark report. Use [IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md](./IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md) for the current audit and revised implementation plan.
+
 **Project:** Auteur Studio Image Generation Intelligence Upgrade  
 **Date:** 2026-11-16  
 **Status:** PRE-BENCHMARK — AWAITING KAGGLE GPU EXECUTION  

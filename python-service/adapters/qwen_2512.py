@@ -40,7 +40,7 @@ class Qwen2512Adapter(BaseGenerationAdapter):
             self.model_id,
             torch_dtype=self.dtype,
         )
-        self.pipe.to(self.device)
+        self.pipe.enable_model_cpu_offload()
         self.load_time_s = time.time() - t0
         self.loaded = True
 

@@ -34,6 +34,8 @@ class ModelInfoResponse(BaseModel):
     supports_ip_adapter: bool
     supports_controlnet: bool
     cpu_fallback: bool = False
+    enabled: bool = True
+    loaded: bool = False
 
 
 class ModelsListResponse(BaseModel):
@@ -109,6 +111,19 @@ class QualityVerifyRequest(BaseModel):
     scene_spec: dict[str, Any] | None = None
 
 
+class ObjectDetectionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    image_base64: str = Field(..., description="Base64 data URI or raw base64 PNG/JPEG")
+
+
+class ObjectDetectionResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    detections: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
 class QualityVerifyResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -119,6 +134,7 @@ class QualityVerifyResponse(BaseModel):
     incorrect_attributes: list[str] = Field(default_factory=list)
     unrequested_additions: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
+    error: str | None = None
 
 
 class ErrorResponse(BaseModel):

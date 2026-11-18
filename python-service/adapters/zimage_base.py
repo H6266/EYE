@@ -38,7 +38,6 @@ class ZImageBaseAdapter(BaseGenerationAdapter):
             torch_dtype=self.dtype,
         )
         self.pipe.enable_model_cpu_offload()
-        self.pipe.to(self.device)
         self.load_time_s = time.time() - t0
         self.loaded = True
 

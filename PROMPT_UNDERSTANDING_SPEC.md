@@ -1,5 +1,7 @@
 # PROMPT UNDERSTANDING & STRUCTURED PROMPT PROCESSING SPECIFICATION
 
+> Historical specification. Use [IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md](./IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md) for the current prompt-interpreter architecture and implementation gates.
+
 **Part of:** Auteur Studio Image Generation Intelligence Upgrade  
 **Status:** SPECIFICATION (not yet implemented)  
 **Date:** 2026-11-16

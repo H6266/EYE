@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 import time
 import os
+import threading
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from engine_loader import EngineLoader, MODEL_REGISTRY
 from models import (
@@ -23,6 +25,8 @@ from models import (
     ParsePromptResponse,
     QualityVerifyRequest,
     QualityVerifyResponse,
+    ObjectDetectionRequest,
+    ObjectDetectionResponse,
     ErrorResponse,
 )
 
@@ -30,6 +34,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("main")
 
 loader: EngineLoader | None = None
+florence_adapter = None
+florence_lock = threading.Lock()
 
 
 @asynccontextmanager
@@ -88,8 +94,7 @@ async def list_models():
 @app.post("/v1/generate", response_model=GenerateResponse)
 async def generate(req: GenerateRequest):
     ldr = _get_loader()
-    adapter = ldr.get_adapter(req.model)
-    if adapter is None:
+    if not ldr.is_model_available(req.model):
         raise HTTPException(
             status_code=400,
             detail=f"Model '{req.model}' not available or not enabled. "
@@ -111,29 +116,24 @@ async def generate(req: GenerateRequest):
             seed=req.seed,
             return_base64=req.return_base64,
         )
-        result = adapter.generate(gen_input)
+        result = await run_in_threadpool(ldr.generate, req.model, gen_input)
+        if result is None:
+            raise HTTPException(status_code=400, detail=f"Model '{req.model}' is not available")
         total_ms = (time.time() - t_total) * 1000
 
         if result.error:
-            return GenerateResponse(
-                image_base64=None,
-                image_url=None,
-                seed=result.seed,
-                model=result.model,
-                timings=Timings(inference_ms=result.inference_time_s * 1000, total_ms=total_ms),
-                vram_peak_gb=result.vram_peak_gb,
-                ram_peak_gb=result.ram_peak_gb,
-                prompt_used=result.prompt_used,
-                optimized_prompt=None,
-                error=result.error,
-            )
+            raise HTTPException(status_code=500, detail=result.error)
 
         return GenerateResponse(
             image_base64=result.image_base64,
             image_url=None,
             seed=result.seed,
             model=result.model,
-            timings=Timings(inference_ms=result.inference_time_s * 1000, total_ms=total_ms),
+            timings=Timings(
+                model_load_ms=result.metadata.get("model_load_time_s", 0.0) * 1000,
+                inference_ms=result.inference_time_s * 1000,
+                total_ms=total_ms,
+            ),
             vram_peak_gb=result.vram_peak_gb,
             ram_peak_gb=result.ram_peak_gb,
             prompt_used=result.prompt_used,
@@ -141,16 +141,9 @@ async def generate(req: GenerateRequest):
         )
     except Exception as exc:
         logger.exception(f"Generation failed for model {req.model}")
-        total_ms = (time.time() - t_total) * 1000
-        return GenerateResponse(
-            image_base64=None,
-            image_url=None,
-            seed=req.seed,
-            model=req.model,
-            timings=Timings(inference_ms=0.0, total_ms=total_ms),
-            prompt_used=req.prompt,
-            error=str(exc),
-        )
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/v1/prompt/parse", response_model=ParsePromptResponse)
@@ -189,6 +182,26 @@ async def verify_quality(req: QualityVerifyRequest):
             criteria=[],
             error=str(exc),
         )
+
+
+@app.post("/v1/quality/objects", response_model=ObjectDetectionResponse)
+async def detect_objects(req: ObjectDetectionRequest):
+    """Run optional Florence-2 detection without loading it during generation."""
+    global florence_adapter
+
+    def detect():
+        global florence_adapter
+        from quality.florence2 import Florence2Adapter
+
+        with florence_lock:
+            if florence_adapter is None:
+                florence_adapter = Florence2Adapter()
+            return florence_adapter.detect_objects(req.image_base64)
+
+    result = await run_in_threadpool(detect)
+    if result.get("error"):
+        raise HTTPException(status_code=503, detail=result["error"])
+    return ObjectDetectionResponse(detections=result.get("detections", {}))
 
 
 @app.post("/v1/upscale")

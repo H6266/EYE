@@ -348,8 +348,8 @@ export function GeneratePanel({
     onAddAsset(asset, insertOnTimeline);
     setStatusMessage(
       insertOnTimeline
-        ? `Rendered locally in ${((take.timingsMs?.total || 2500) / 1000).toFixed(1)}s and added to V1.`
-        : `Saved local render to Media Bin.`
+        ? `Rendered in ${((take.timingsMs?.total || 2500) / 1000).toFixed(1)}s and added to V1.`
+        : `Saved render to Media Bin.`
     );
   };
 
@@ -527,7 +527,7 @@ export function GeneratePanel({
       addTakeToStudio(formattedTakes[0], true);
       if (formattedTakes.length > 1) {
         setStatusMessage(
-          `Generated ${formattedTakes.length} takes locally via CLIP + UNet + VAE. Take 1 added to V1.`
+          `Generated ${formattedTakes.length} takes with ${activeEngine.name}. Take 1 added to V1.`
         );
       }
     } catch (err) {

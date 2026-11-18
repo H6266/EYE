@@ -1,5 +1,7 @@
 # KAGGLE BENCHMARK NOTEBOOK INSTRUCTIONS
 
+> Historical notebook instructions. Preflight the scripts and dependencies against [IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md](./IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md) before treating their measurements as valid.
+
 This document describes how to run the Auteur Studio image-generation benchmarks on Kaggle GPU notebooks.
 
 ## Overview

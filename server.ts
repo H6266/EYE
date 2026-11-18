@@ -4,6 +4,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { localDiffusionEngine } from './src/engine/localDiffusionPipeline';
+import { generateImage } from './src/engine/generationRouter';
+import { pythonDiffusionClient } from './src/engine/pythonDiffusionClient';
+import { IMAGE_ENGINES } from './src/data/imageEngines';
+import { ImageEngineId, PYTHON_ENGINE_IDS } from './src/types/studio';
 import { buildAutoSubtitleCues } from './src/utils/timelineEngine';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -89,14 +93,16 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '60mb' }));
 
-  app.get('/api/health', (_req: Request, res: Response) => {
+  app.get('/api/health', async (_req: Request, res: Response) => {
     const hasKey = Boolean(
       process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'
     );
+    await pythonDiffusionClient.checkHealth(true);
     res.json({
       ok: true,
       hasApiKey: hasKey,
       localDiffusion: localDiffusionEngine.getStatus(),
+      pythonService: pythonDiffusionClient.getStatus(),
     });
   });
 
@@ -261,6 +267,12 @@ async function startServer() {
         res.status(400).json({ error: 'A scene prompt is required.' });
         return;
       }
+      const selectedEngine = IMAGE_ENGINES.find((engine) => engine.id === engineId);
+      if (!selectedEngine) {
+        res.status(400).json({ error: `Unknown image engine '${String(engineId)}'.` });
+        return;
+      }
+      const selectedEngineId = selectedEngine.id;
 
       const safeCount = Math.max(1, Math.min(4, Number(batchCount) || 1));
       const baseSeed =
@@ -279,30 +291,89 @@ async function startServer() {
       const takes = [];
       for (let i = 0; i < safeCount; i++) {
         const takeSeed = baseSeed + i * 137;
-        const result = await localDiffusionEngine.generate({
-          prompt: prompt.trim(),
-          negativePrompt: String(negativePrompt || '').trim(),
-          guidanceScale: effectiveGuidance,
-          seed: takeSeed,
-          aspectRatio,
-          referenceImagePngBase64: useReferenceLatent
-            ? String(referenceImagePngBase64)
-            : undefined,
-          img2imgStrength: Number(img2imgStrength) || 0.78,
-        });
+        const isPythonEngine = PYTHON_ENGINE_IDS.includes(selectedEngineId);
+        const result = await generateImage(
+          isPythonEngine
+            ? {
+                model: selectedEngineId,
+                prompt: prompt.trim(),
+                negativePrompt: String(negativePrompt || '').trim(),
+                width: aspectRatio === '9:16' ? 576 : 1024,
+                height: aspectRatio === '16:9' ? 576 : 1024,
+                numInferenceSteps:
+                  engineId === 'python-zimage-turbo'
+                    ? 8
+                    : engineId === 'python-flux-klein'
+                      ? 4
+                      : engineId === 'python-zimage-base'
+                        ? 50
+                        : 50,
+                guidanceScale:
+                  engineId === 'python-zimage-turbo'
+                    ? 0
+                    : engineId === 'python-flux-klein'
+                      ? 1
+                      : engineId === 'python-qwen-2512'
+                        ? 4
+                        : engineId === 'python-moss-sft'
+                          ? 3
+                          : 5,
+                seed: takeSeed,
+                returnBase64: true,
+              }
+            : {
+                prompt: prompt.trim(),
+                negativePrompt: String(negativePrompt || '').trim(),
+                guidanceScale: effectiveGuidance,
+                seed: takeSeed,
+                aspectRatio,
+                referenceImagePngBase64: useReferenceLatent
+                  ? String(referenceImagePngBase64)
+                  : undefined,
+                img2imgStrength: Number(img2imgStrength) || 0.78,
+              },
+          selectedEngineId
+        );
 
-        takes.push({
-          imageDataUrl: result.imageDataUrl,
-          seed: result.seed,
-          modelLabel:
-            result.mode === 'img2img'
-              ? 'Local VAE Img2Img + UNet'
-              : effectiveGuidance > 1
-                ? 'Local SDXS-512 + CFG'
-                : 'Local SDXS-512 Neural',
-          tokenStats: result.tokenStats,
-          timingsMs: result.timingsMs,
-        });
+        const modelLabel = selectedEngine.name;
+        if ('imageDataUrl' in result) {
+          takes.push({
+            imageDataUrl: result.imageDataUrl,
+            seed: result.seed,
+            modelLabel:
+              result.mode === 'img2img'
+                ? 'Local VAE Img2Img + UNet'
+                : effectiveGuidance > 1
+                  ? 'Local SDXS-512 + CFG'
+                  : 'Local SDXS-512 Neural',
+            tokenStats: result.tokenStats,
+            timingsMs: result.timingsMs,
+          });
+        } else {
+          if (result.error) {
+            res.status(502).json({ error: result.error });
+            return;
+          }
+          const imageDataUrl =
+            result.imageBase64 ??
+            (result.imageUrl?.startsWith('data:') ? result.imageUrl : '');
+          if (!imageDataUrl) {
+            res.status(502).json({ error: 'The selected engine returned no image.' });
+            return;
+          }
+          takes.push({
+            imageDataUrl,
+            seed: result.seed,
+            modelLabel,
+            timingsMs: {
+              tokenizeAndEncode: 0,
+              vaeEncode: 0,
+              unetDenoise: result.timingsMs.inferenceMs,
+              vaeDecode: 0,
+              total: result.timingsMs.totalMs,
+            },
+          });
+        }
       }
 
       res.json({
@@ -322,6 +393,21 @@ async function startServer() {
             : 'Local diffusion inference failed.',
       });
     }
+  });
+
+  app.post('/api/quality/objects', async (req: Request, res: Response) => {
+    const { imageBase64 } = req.body ?? {};
+    if (typeof imageBase64 !== 'string' || !imageBase64.trim()) {
+      res.status(400).json({ error: 'An image is required for inspection.' });
+      return;
+    }
+
+    const result = await pythonDiffusionClient.detectObjects(imageBase64);
+    if (result.error) {
+      res.status(503).json({ error: result.error });
+      return;
+    }
+    res.json({ detections: result.detections });
   });
 
   // 3. Video Generation / Animation / Extension via Interactions API (Omni Flash)

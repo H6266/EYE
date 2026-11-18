@@ -19,40 +19,20 @@ export async function generateImage(
   engineId: ImageEngineId,
 ): Promise<GenerationResult> {
   if (PYTHON_ENGINE_IDS.includes(engineId)) {
+    if (!('model' in input)) {
+      throw new Error(`The '${engineId}' engine requires Python generation options.`);
+    }
     const client = new PythonDiffusionClient(
       process.env.PYTHON_SERVICE_URL ?? 'http://localhost:8100',
       Number(process.env.PYTHON_SERVICE_TIMEOUT_MS ?? 300000),
     );
-
-    const available = await client.checkHealth();
-    if (!available) {
-      // Fall back to local SDXS-512
-      return localDiffusionEngine.generate({
-        prompt: (input as LocalDiffusionInput).prompt,
-        negativePrompt: (input as PythonGenerationInput).negativePrompt ?? '',
-        guidanceScale: 0,
-        seed: (input as PythonGenerationInput).seed ?? 0,
-        aspectRatio: (input as LocalDiffusionInput).aspectRatio ?? '16:9',
-        referenceImagePngBase64: (input as LocalDiffusionInput).referenceImagePngBase64,
-        img2imgStrength: (input as LocalDiffusionInput).img2imgStrength,
-      });
-    }
-
-    const pythonInput: PythonGenerationInput = {
-      model: engineId,
-      prompt: (input as PythonGenerationInput).prompt,
-      negativePrompt: (input as PythonGenerationInput).negativePrompt,
-      width: (input as PythonGenerationInput).width,
-      height: (input as PythonGenerationInput).height,
-      numInferenceSteps: (input as PythonGenerationInput).numInferenceSteps,
-      guidanceScale: (input as PythonGenerationInput).guidanceScale,
-      seed: (input as PythonGenerationInput).seed,
-      returnBase64: true,
-    };
-    return client.generate(pythonInput);
+    return client.generate({ ...input, model: engineId });
   }
 
-  return localDiffusionEngine.generate(input as LocalDiffusionInput);
+  if ('model' in input) {
+    throw new Error(`The '${engineId}' engine does not accept Python generation options.`);
+  }
+  return localDiffusionEngine.generate(input);
 }
 
 export async function checkPythonService(): Promise<boolean> {

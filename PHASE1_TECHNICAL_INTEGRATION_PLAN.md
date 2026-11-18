@@ -1,6 +1,8 @@
 # AUTEUR STUDIO — PHASE 1 TECHNICAL INTEGRATION PLAN
 ## Next-Generation Neural Image Intelligence Upgrade
 
+> Historical architecture snapshot. Use [IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md](./IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md) for the current repository state and revised plan.
+
 **Status:** AUDIT COMPLETE — READY FOR REVIEW  
 **Date:** 2026-11-16  
 **Branch:** main (commit d559854)  

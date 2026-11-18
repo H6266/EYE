@@ -57,6 +57,14 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     },
 }
 
+MODEL_ALIASES = {
+    "python-zimage-turbo": "z-image-turbo",
+    "python-flux-klein": "flux-klein-4b",
+    "python-zimage-base": "z-image-base",
+    "python-qwen-2512": "qwen-2512",
+    "python-moss-sft": "moss-sft",
+}
+
 DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
 MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", os.path.expanduser("~/.cache/huggingface"))
 
@@ -69,6 +77,7 @@ class EngineLoader:
         self.cache_dir = cache_dir
         self._adapters: dict[str, BaseGenerationAdapter] = {}
         self._lock = threading.Lock()
+        self._generation_lock = threading.RLock()
         os.environ["HF_HOME"] = cache_dir
         os.environ["HUGGINGFACE_HUB_CACHE"] = cache_dir
 
@@ -102,13 +111,26 @@ class EngineLoader:
             })
         return result
 
+    def is_model_available(self, model_id: str) -> bool:
+        model_id = MODEL_ALIASES.get(model_id, model_id)
+        entry = MODEL_REGISTRY.get(model_id)
+        return bool(entry and entry["enabled"])
+
     def get_adapter(self, model_id: str) -> BaseGenerationAdapter | None:
         """Get or lazily load an adapter for the given model_id."""
+        model_id = MODEL_ALIASES.get(model_id, model_id)
         if model_id not in MODEL_REGISTRY:
             return None
         entry = MODEL_REGISTRY[model_id]
         if not entry["enabled"]:
             return None
+        if not entry.get("cpu_fallback", False) and (
+            self.device == "cpu" or not torch.cuda.is_available()
+        ):
+            raise RuntimeError(
+                f"Model '{model_id}' requires a CUDA GPU. "
+                "Choose the local-sdxs engine or connect a GPU inference service."
+            )
 
         with self._lock:
             if model_id not in self._adapters:
@@ -116,22 +138,46 @@ class EngineLoader:
                 try:
                     adapter.load()
                 except Exception as exc:
-                    logger.error(f"Failed to load model {model_id}: {exc}")
-                    return None
+                    logger.exception("Failed to load model %s", model_id)
+                    raise RuntimeError(f"Failed to load model '{model_id}': {exc}") from exc
                 self._adapters[model_id] = adapter
             return self._adapters[model_id]
 
+    def generate(self, model_id: str, generation_input) -> Any:
+        """Serialize generations and keep at most one heavyweight adapter loaded."""
+        model_id = MODEL_ALIASES.get(model_id, model_id)
+        if model_id not in MODEL_REGISTRY:
+            return None
+
+        with self._generation_lock:
+            for loaded_id in list(self._adapters):
+                if loaded_id != model_id:
+                    self.unload_model(loaded_id)
+
+            was_loaded = model_id in self._adapters and self._adapters[model_id].is_loaded()
+            adapter = self.get_adapter(model_id)
+            if adapter is None:
+                return None
+            result = adapter.generate(generation_input)
+            result.metadata["model_load_time_s"] = 0.0 if was_loaded else adapter.load_time_s
+            return result
+
     def unload_model(self, model_id: str) -> bool:
         """Unload a specific model to free VRAM."""
-        with self._lock:
-            adapter = self._adapters.pop(model_id, None)
-            if adapter is not None:
-                try:
-                    adapter.unload()
-                except Exception as exc:
-                    logger.error(f"Error unloading {model_id}: {exc}")
-                return True
-            return False
+        with self._generation_lock:
+            with self._lock:
+                adapter = self._adapters.get(model_id)
+                if adapter is not None:
+                    try:
+                        adapter.unload()
+                    except Exception as exc:
+                        logger.exception("Error unloading %s", model_id)
+                        raise RuntimeError(
+                            f"Failed to unload model '{model_id}': {exc}"
+                        ) from exc
+                    del self._adapters[model_id]
+                    return True
+                return False
 
     def unload_all(self) -> None:
         """Unload all models."""

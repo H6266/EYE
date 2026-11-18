@@ -1,5 +1,7 @@
 # AUTEUR STUDIO — PYTHON INFERENCE ADAPTER INTEGRATION PLAN
 
+> Historical integration specification. Python-service code now exists but remains unverified and is not wired to the active Express image route. Use [IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md](./IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md) for current blockers and sequencing.
+
 **Status:** SPECIFICATION (not yet implemented)  
 **Date:** 2026-11-16  
 **Part of:** Image Generation Intelligence Upgrade (Stage 9)

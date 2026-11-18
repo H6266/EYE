@@ -38,7 +38,6 @@ class ZImageTurboAdapter(BaseGenerationAdapter):
             torch_dtype=self.dtype,
         )
         self.pipe.enable_model_cpu_offload()
-        self.pipe.to(self.device)
         self.load_time_s = time.time() - t0
         self.loaded = True
 
@@ -59,7 +58,6 @@ class ZImageTurboAdapter(BaseGenerationAdapter):
         t0 = time.time()
         image: Image.Image = self.pipe(
             prompt=input.prompt,
-            negative_prompt=input.negative_prompt,
             height=input.height,
             width=input.width,
             guidance_scale=0.0,  # Z-Image-Turbo uses guidance=0.0

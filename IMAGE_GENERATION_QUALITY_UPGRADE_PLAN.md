@@ -1,6 +1,8 @@
 # AUTEUR STUDIO — IMAGE GENERATION QUALITY UPGRADE
 ## Technical Implementation Plan
 
+> Historical plan. The repository and model research have since changed. Use [IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md](./IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md) as the current audit and implementation plan.
+
 **Date:** 2026-11-16  
 **Status:** PLANNING — PRE-IMPLEMENTATION  
 **Environment Constraint:** CPU-only Codespace (7.8GB RAM). No GPU. All model training/inference experiments must run on Kaggle GPU (T4/P100 16GB VRAM).

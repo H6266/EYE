@@ -1,5 +1,7 @@
 # AUTEUR STUDIO — OPEN-SOURCE IMAGE GENERATION ENGINE RESEARCH REPORT
 
+> Historical pre-benchmark research snapshot. Use [IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md](./IMAGE_GENERATION_INTELLIGENCE_UPGRADE_PLAN.md) for the current model shortlist, repository audit, and next steps.
+
 **Status:** RESEARCH COMPLETE (Stage 1-8) — PRE-BENCHMARK  
 **Date:** 2026-11-16  
 **Hardware Environment:** GitHub Codespace (CPU-only, 7.8GB RAM, 15GB disk available) — all model experiments must run on Kaggle GPU (T4x2 16GB VRAM per GPU or P100 16GB)

@@ -9,6 +9,8 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -18,12 +20,17 @@ from transformers import AutoProcessor, AutoModelForCausalLM
 logger = logging.getLogger("florence2")
 
 MODEL_ID = "microsoft/Florence-2-base-ft"
+LOCAL_MODEL_DIR = Path(__file__).resolve().parents[2] / "models" / "weights" / "helpers" / "florence2"
+MODEL_SOURCE = os.getenv(
+    "FLORENCE2_MODEL",
+    str(LOCAL_MODEL_DIR) if (LOCAL_MODEL_DIR / "model.safetensors").is_file() else MODEL_ID,
+)
 
 
 class Florence2Adapter:
     """Florence-2 for object detection, dense captioning, and OCR."""
 
-    def __init__(self, model_id: str = MODEL_ID, device: str | None = None):
+    def __init__(self, model_id: str = MODEL_SOURCE, device: str | None = None):
         self.model_id = model_id
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
@@ -46,6 +53,7 @@ class Florence2Adapter:
             )
             if self.device == "cuda" and not hasattr(self.model, "hf_device_map"):
                 self.model.to(self.device)
+            self.model.eval()
             self._loaded = True
             logger.info(f"Florence-2 loaded: {self.model_id}")
         except Exception as exc:
@@ -77,12 +85,13 @@ class Florence2Adapter:
             if self.device == "cuda":
                 inputs = inputs.to("cuda")
 
-            generated_ids = self.model.generate(
-                input_ids=inputs["input_ids"],
-                pixel_values=inputs["pixel_values"],
-                max_new_tokens=1024,
-                num_beams=3,
-            )
+            with torch.inference_mode():
+                generated_ids = self.model.generate(
+                    input_ids=inputs["input_ids"],
+                    pixel_values=inputs["pixel_values"],
+                    max_new_tokens=1024,
+                    num_beams=3,
+                )
             generated_text = self.processor.batch_decode(
                 generated_ids, skip_special_tokens=False
             )[0]

@@ -37,13 +37,9 @@ class MossSftAdapter(BaseGenerationAdapter):
             self.model_id,
             custom_pipeline="pipeline_moss_image",
             trust_remote_code=True,
-            torch_dtype=self.dtype,
+            torch_dtype={"default": self.dtype, "vae": torch.float32},
         )
         self.pipe.enable_model_cpu_offload()
-        self.pipe.to(self.device)
-        # VAE in FP32 per model card requirement
-        if hasattr(self.pipe, "vae"):
-            self.pipe.vae.to(torch.float32)
         self.load_time_s = time.time() - t0
         self.loaded = True
 
