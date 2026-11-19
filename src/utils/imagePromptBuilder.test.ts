@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildVideoPrompt,
   buildRichVisualPrompt,
   sanitizeNegativePrompt,
 } from './imagePromptBuilder';
@@ -21,6 +22,23 @@ test('buildRichVisualPrompt integrates character traits, camera framing, lightin
   assert.match(out, /low-angle hero framing/i);
   assert.match(out, /golden hour/i);
   assert.match(out, /2D animated/i);
+});
+
+test('buildVideoPrompt keeps the requested scene distinct from added visual direction', () => {
+  const description =
+    'A courier rides a red bicycle through a rainy Tokyo street at night.';
+  const out = buildVideoPrompt({
+    prompt: description,
+    style: 'cinematic',
+    cameraFraming: 'low-hero',
+    lighting: 'golden',
+  });
+
+  assert.ok(out.startsWith(`Primary scene description (follow faithfully):\n${description}`));
+  assert.match(out, /Additional visual direction:/);
+  assert.match(out, /Camera:/);
+  assert.match(out, /Lighting:/);
+  assert.match(out, /Visual style:/);
 });
 
 test('getDimensionsForAspect returns native 512x512 / aspect-framed local diffusion sizes', () => {
@@ -44,8 +62,10 @@ test('sanitizeNegativePrompt supplies clean defaults when omitted', () => {
 
 test('IMAGE_ENGINES configures self-contained local neural diffusion modes without third-party APIs', () => {
   const ids = IMAGE_ENGINES.map((e) => e.id);
-  assert.ok(ids.includes('local-sdxs'));
-  assert.ok(ids.includes('local-sdxs-cfg'));
-  assert.ok(ids.includes('local-sdxs-img2img'));
-  assert.equal(ids.length, 3);
+  const localIds = ids.filter((id) => id.startsWith('local-sdxs'));
+  assert.deepEqual(localIds, ['local-sdxs', 'local-sdxs-cfg', 'local-sdxs-img2img']);
+  assert.ok(ids.includes('remote-zimage-turbo'));
+  assert.ok(ids.includes('remote-flux-klein'));
+  assert.ok(ids.includes('remote-qwen-2512'));
+  assert.ok(ids.includes('remote-qwen-2512-lightning'));
 });

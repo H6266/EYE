@@ -18,45 +18,24 @@ import {
 
 const MODEL_DIR = path.resolve(process.cwd(), '.cache/models/sdxs-512');
 
-const WEIGHT_SOURCES: Array<{ relPath: string; url: string }> = [
-  {
-    relPath: 'tokenizer/vocab.json',
-    url: 'https://huggingface.co/skillsafeai/sdxs-512-dreamshaper-onnx-webgpu/resolve/main/tokenizer/vocab.json',
-  },
-  {
-    relPath: 'tokenizer/merges.txt',
-    url: 'https://huggingface.co/skillsafeai/sdxs-512-dreamshaper-onnx-webgpu/resolve/main/tokenizer/merges.txt',
-  },
-  {
-    relPath: 'text_encoder.onnx',
-    url: 'https://huggingface.co/skillsafeai/sdxs-512-dreamshaper-onnx-webgpu/resolve/main/text_encoder.onnx',
-  },
-  {
-    relPath: 'unet.onnx',
-    url: 'https://huggingface.co/skillsafeai/sdxs-512-dreamshaper-onnx-webgpu/resolve/main/unet.onnx',
-  },
-  {
-    relPath: 'vae_decoder.onnx',
-    url: 'https://huggingface.co/skillsafeai/sdxs-512-dreamshaper-onnx-webgpu/resolve/main/vae_decoder.onnx',
-  },
-  {
-    relPath: 'vae_encoder.onnx',
-    url: 'https://huggingface.co/jdp8/sd-turbo-onnx/resolve/main/vae_encoder/model.onnx',
-  },
+const REQUIRED_WEIGHT_FILES = [
+  'tokenizer/vocab.json',
+  'tokenizer/merges.txt',
+  'text_encoder.onnx',
+  'unet.onnx',
+  'vae_decoder.onnx',
+  'vae_encoder.onnx',
 ];
 
-async function ensureWeightFile(relPath: string, url: string): Promise<void> {
-  const fullPath = path.join(MODEL_DIR, relPath);
-  if (fs.existsSync(fullPath) && fs.statSync(fullPath).size > 1024) {
-    return;
-  }
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  const res = await fetch(url, { signal: AbortSignal.timeout(180000) });
-  if (!res.ok) {
-    throw new Error(`Failed to initialize local model weight ${relPath}: HTTP ${res.status}`);
-  }
-  const buf = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(fullPath, buf);
+function getMissingWeightFiles(): string[] {
+  return REQUIRED_WEIGHT_FILES.filter((relPath) => {
+    const fullPath = path.join(MODEL_DIR, relPath);
+    try {
+      return !fs.statSync(fullPath).isFile() || fs.statSync(fullPath).size <= 1024;
+    } catch {
+      return true;
+    }
+  });
 }
 
 function decodePngToChw512(pngBuffer: Buffer): Float32Array {
@@ -117,47 +96,95 @@ interface LoadedEngine {
   textEncoder: ort.InferenceSession;
   unet: ort.InferenceSession;
   vaeDecoder: ort.InferenceSession;
-  vaeEncoder: ort.InferenceSession;
+  vaeEncoder: ort.InferenceSession | null;
 }
 
 class LocalDiffusionEngine {
   private enginePromise: Promise<LoadedEngine> | null = null;
+  private vaeEncoderPromise: Promise<ort.InferenceSession> | null = null;
   private inferQueue: Promise<void> = Promise.resolve();
+  private state: 'idle' | 'loading' | 'ready' | 'error' = 'idle';
+  private readonly sessionOptions: ort.InferenceSession.SessionOptions = {
+    logSeverityLevel: 3,
+    intraOpNumThreads: 1,
+    interOpNumThreads: 1,
+    executionMode: 'sequential',
+    graphOptimizationLevel: 'basic',
+    enableCpuMemArena: false,
+    enableMemPattern: false,
+  };
 
   async ensureReady(): Promise<LoadedEngine> {
     if (!this.enginePromise) {
+      this.state = 'loading';
       this.enginePromise = (async () => {
-        for (const item of WEIGHT_SOURCES) {
-          await ensureWeightFile(item.relPath, item.url);
+        const missingFiles = getMissingWeightFiles();
+        if (missingFiles.length > 0) {
+          throw new Error(
+            `Local SDXS model files are missing or incomplete in ${MODEL_DIR}: ${missingFiles.join(', ')}. ` +
+            'Automatic downloads are disabled. Install the model files locally before generating.'
+          );
         }
-        const sessionOpts: ort.InferenceSession.SessionOptions = {
-          logSeverityLevel: 3,
-          intraOpNumThreads: 4,
-        };
+
         const tokenizer = new ClipBpeTokenizer(path.join(MODEL_DIR, 'tokenizer'));
-        const [textEncoder, unet, vaeDecoder, vaeEncoder] = await Promise.all([
-          ort.InferenceSession.create(path.join(MODEL_DIR, 'text_encoder.onnx'), sessionOpts),
-          ort.InferenceSession.create(path.join(MODEL_DIR, 'unet.onnx'), sessionOpts),
-          ort.InferenceSession.create(path.join(MODEL_DIR, 'vae_decoder.onnx'), sessionOpts),
-          ort.InferenceSession.create(path.join(MODEL_DIR, 'vae_encoder.onnx'), sessionOpts),
-        ]);
-        return { tokenizer, textEncoder, unet, vaeDecoder, vaeEncoder };
-      })();
+        const textEncoder = await ort.InferenceSession.create(
+          path.join(MODEL_DIR, 'text_encoder.onnx'),
+          this.sessionOptions
+        );
+        const unet = await ort.InferenceSession.create(
+          path.join(MODEL_DIR, 'unet.onnx'),
+          this.sessionOptions
+        );
+        const vaeDecoder = await ort.InferenceSession.create(
+          path.join(MODEL_DIR, 'vae_decoder.onnx'),
+          this.sessionOptions
+        );
+        return { tokenizer, textEncoder, unet, vaeDecoder, vaeEncoder: null };
+      })().then(
+        (engine) => {
+          this.state = 'ready';
+          return engine;
+        },
+        (error: unknown) => {
+          this.enginePromise = null;
+          this.state = 'error';
+          throw error;
+        }
+      );
     }
     return this.enginePromise;
   }
 
+  private async ensureVaeEncoder(engine: LoadedEngine): Promise<ort.InferenceSession> {
+    if (engine.vaeEncoder) return engine.vaeEncoder;
+    if (!this.vaeEncoderPromise) {
+      this.vaeEncoderPromise = ort.InferenceSession.create(
+        path.join(MODEL_DIR, 'vae_encoder.onnx'),
+        this.sessionOptions
+      ).then(
+        (session) => {
+          engine.vaeEncoder = session;
+          return session;
+        },
+        (error: unknown) => {
+          this.vaeEncoderPromise = null;
+          throw error;
+        }
+      );
+    }
+    return this.vaeEncoderPromise;
+  }
+
   getStatus(): {
     ready: boolean;
+    state: 'idle' | 'loading' | 'ready' | 'error';
     weightsPresent: boolean;
     ingredients: string[];
   } {
-    const weightsPresent = WEIGHT_SOURCES.every((w) => {
-      const p = path.join(MODEL_DIR, w.relPath);
-      return fs.existsSync(p) && fs.statSync(p).size > 1024;
-    });
+    const weightsPresent = getMissingWeightFiles().length === 0;
     return {
-      ready: Boolean(this.enginePromise),
+      ready: this.state === 'ready',
+      state: this.state,
       weightsPresent,
       ingredients: [
         'CLIP BPE Tokenizer (vocab + merges)',
@@ -172,8 +199,8 @@ class LocalDiffusionEngine {
   async generate(input: LocalDiffusionInput): Promise<LocalDiffusionResult> {
     const runTask = async (): Promise<LocalDiffusionResult> => {
       const tStart = Date.now();
-      const { tokenizer, textEncoder, unet, vaeDecoder, vaeEncoder } =
-        await this.ensureReady();
+      const engine = await this.ensureReady();
+      const { tokenizer, textEncoder, unet, vaeDecoder } = engine;
 
       // Calibrated guidance: SDXS distilled UNet excels at 0 (pure distilled) or 1.05..1.35 mild negative repulsion
       const rawGuidance = Number(input.guidanceScale ?? 0);
@@ -207,33 +234,30 @@ class LocalDiffusionEngine {
 
       if (input.referenceImagePngBase64) {
         const tVaeEnc0 = Date.now();
-        try {
-          const pngBuf = Buffer.from(input.referenceImagePngBase64, 'base64');
-          const chw = decodePngToChw512(pngBuf);
-          const encOut = await vaeEncoder.run({
-            [vaeEncoder.inputNames[0]]: new ort.Tensor('float32', chw, [1, 3, 512, 512]),
-          });
-          const rawLatent = encOut[vaeEncoder.outputNames[0]].data as Float32Array;
-          const scaledClean = new Float32Array(rawLatent.length);
-          for (let i = 0; i < rawLatent.length; i++) {
-            scaledClean[i] = rawLatent[i] * VAE_LATENT_SCALE;
-          }
-          const noised = addLatentNoiseForImg2Img(
-            scaledClean,
-            seed,
-            input.img2imgStrength ?? 0.72
-          );
-          latents = noised.noisyLatent;
-          scheduleStep = {
-            timestep: noised.timestep,
-            sigma: noised.sigma,
-            nextSigma: 0,
-          };
-          mode = 'img2img';
-          vaeEncodeMs = Date.now() - tVaeEnc0;
-        } catch {
-          latents = generateSeededLatents(seed, scheduleStep.sigma);
+        const vaeEncoder = await this.ensureVaeEncoder(engine);
+        const pngBuf = Buffer.from(input.referenceImagePngBase64, 'base64');
+        const chw = decodePngToChw512(pngBuf);
+        const encOut = await vaeEncoder.run({
+          [vaeEncoder.inputNames[0]]: new ort.Tensor('float32', chw, [1, 3, 512, 512]),
+        });
+        const rawLatent = encOut[vaeEncoder.outputNames[0]].data as Float32Array;
+        const scaledClean = new Float32Array(rawLatent.length);
+        for (let i = 0; i < rawLatent.length; i++) {
+          scaledClean[i] = rawLatent[i] * VAE_LATENT_SCALE;
         }
+        const noised = addLatentNoiseForImg2Img(
+          scaledClean,
+          seed,
+          input.img2imgStrength ?? 0.72
+        );
+        latents = noised.noisyLatent;
+        scheduleStep = {
+          timestep: noised.timestep,
+          sigma: noised.sigma,
+          nextSigma: 0,
+        };
+        mode = 'img2img';
+        vaeEncodeMs = Date.now() - tVaeEnc0;
       } else {
         latents = generateSeededLatents(seed, scheduleStep.sigma);
       }

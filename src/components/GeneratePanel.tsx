@@ -28,6 +28,7 @@ import {
   LIGHTING_OPTIONS,
 } from '../data/imageEngines';
 import {
+  buildVideoPrompt,
   buildRichVisualPrompt,
   sanitizeNegativePrompt,
 } from '../utils/imagePromptBuilder';
@@ -45,6 +46,27 @@ interface GeneratePanelProps {
 }
 
 type GenMode = 'image' | 'video' | 'restyle';
+
+const REMOTE_IMAGE_MODELS: Partial<
+  Record<ImageEngineId, { generate: string; edit?: string; steps: number }>
+> = {
+  'remote-zimage-turbo': { generate: 'z-image-turbo', steps: 8 },
+  'remote-flux-klein': {
+    generate: 'flux-2-klein-4b',
+    edit: 'flux-2-klein-4b-edit',
+    steps: 4,
+  },
+  'remote-flux-klein-edit': {
+    generate: 'flux-2-klein-4b',
+    edit: 'flux-2-klein-4b-edit',
+    steps: 4,
+  },
+  'remote-qwen-2512': { generate: 'qwen-image-2512', steps: 50 },
+  'remote-qwen-2512-lightning': {
+    generate: 'qwen-image-2512-lightning',
+    steps: 4,
+  },
+};
 
 interface GeneratedTake {
   id: string;
@@ -105,6 +127,27 @@ async function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+async function readApiJson<T>(response: Response, operation: string): Promise<T> {
+  const body = await response.text();
+  if (!body.trim()) {
+    throw new Error(
+      `${operation} returned an empty response (HTTP ${response.status}). Check the app server logs.`
+    );
+  }
+
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    const contentType = response.headers.get('content-type') ?? '';
+    const responseType = contentType.includes('json')
+      ? 'invalid JSON'
+      : 'a non-JSON response';
+    throw new Error(
+      `${operation} returned ${responseType} (HTTP ${response.status}). Check that the app server is running.`
+    );
+  }
+}
+
 /**
  * Converts any image URL/data URL into a 512x512 PNG base64 string for the local VAE Encoder.
  */
@@ -151,9 +194,10 @@ export function GeneratePanel({
   const [style, setStyle] = useState<VisualStyle>('cinematic');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [qualityPreset, setQualityPreset] = useState('high');
+  const [videoResolution, setVideoResolution] = useState<'720p' | '1080p'>('720p');
   const [cameraFraming, setCameraFraming] = useState<string>('auto');
   const [lighting, setLighting] = useState<string>('auto');
-  const [duration, setDuration] = useState(5);
+  const [duration, setDuration] = useState(4);
 
   // Local Diffusion Controls (Sampler, CFG Guidance, VAE Img2Img Strength)
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -205,9 +249,15 @@ export function GeneratePanel({
 
   useEffect(() => {
     if (mode === 'restyle') {
-      setEngineId('local-sdxs-img2img');
+      if (engineId === 'remote-flux-klein') {
+        setEngineId('remote-flux-klein-edit');
+      } else if (!REMOTE_IMAGE_MODELS[engineId]?.edit) {
+        setEngineId('local-sdxs-img2img');
+      }
     } else if (engineId === 'local-sdxs-img2img' && !useCharacterLatent) {
       setEngineId('local-sdxs');
+    } else if (engineId === 'remote-flux-klein-edit') {
+      setEngineId('remote-flux-klein');
     }
   }, [mode, useCharacterLatent, engineId]);
 
@@ -392,7 +442,9 @@ export function GeneratePanel({
       }
 
       if (mode === 'video') {
-        const richPrompt = buildRichVisualPrompt({
+        const videoAspectRatio =
+          aspectRatio === '9:16' ? '9:16' : '16:9';
+        const richPrompt = buildVideoPrompt({
           prompt: activePrompt,
           style,
           cameraFraming,
@@ -404,38 +456,82 @@ export function GeneratePanel({
         if (activeCharacter?.imageUrl) {
           refBase64 = await imageUrlToPng512Base64(activeCharacter.imageUrl);
         }
-        const res = await fetch('/api/media/video', {
+        const res = await fetch('/api/media/video/jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompt: richPrompt,
-            style,
-            aspectRatio,
+            aspectRatio: videoAspectRatio,
             durationSeconds: duration,
+            resolution: videoResolution,
             referenceImageBase64: refBase64,
             referenceImageMimeType: 'image/png',
           }),
         });
-        const data = await res.json();
+        const data = await readApiJson<{
+          id?: string;
+          status?: 'queued' | 'processing' | 'completed' | 'failed';
+          progress?: number | null;
+          error?: string;
+          resultUrl?: string;
+          durationSeconds?: number;
+        }>(res, 'Video generation');
         if (!res.ok) {
           setErrorMsg(data.error || 'Video generation failed.');
           return;
         }
+        if (!data.id) {
+          setErrorMsg('Video service returned no job ID.');
+          return;
+        }
+
+        const jobId = data.id;
+        let job = data;
+        const pollUntil = Date.now() + 10 * 60 * 1000;
+        while (
+          (job.status === 'queued' || job.status === 'processing') &&
+          Date.now() < pollUntil
+        ) {
+          setStatusMessage(
+            job.status === 'queued'
+              ? 'Video job queued…'
+              : 'Video generation is running on Vertex AI…'
+          );
+          await new Promise((resolve) => window.setTimeout(resolve, 5000));
+          const statusResponse = await fetch(
+            `/api/media/video/jobs/${encodeURIComponent(jobId)}`
+          );
+          job = await readApiJson<typeof job>(statusResponse, 'Video job status');
+          if (!statusResponse.ok) {
+            setErrorMsg(job.error || 'Could not retrieve video job status.');
+            return;
+          }
+        }
+        if (job.status === 'failed') {
+          setErrorMsg(job.error || 'Video generation failed.');
+          return;
+        }
+        if (job.status !== 'completed' || !job.resultUrl) {
+          setErrorMsg('Video generation timed out before returning a result.');
+          return;
+        }
+
+        const videoUrl = job.resultUrl;
         const asset: MediaAsset = {
           id: `vid-${Date.now()}`,
           title: activePrompt.slice(0, 28) || 'Generated Clip',
           kind: 'video',
-          url: data.videoDataUrl,
-          duration: data.durationSeconds || duration,
+          url: videoUrl,
+          duration: job.durationSeconds || duration,
           styleTag: style,
           prompt: activePrompt,
-          aspectRatio,
-          interactionId: data.interactionId,
+          aspectRatio: videoAspectRatio,
+          interactionId: jobId,
           createdAt: Date.now(),
         };
         onAddAsset(asset, true);
-        setPreview({ url: data.videoDataUrl, kind: 'video', title: asset.title });
-        setStatusMessage('Video clip generated and appended to V1 timeline.');
+        setPreview({ url: videoUrl, kind: 'video', title: asset.title });
+        setStatusMessage('Video clip generated on Vertex AI and appended to V1 timeline.');
         return;
       }
 
@@ -468,6 +564,94 @@ export function GeneratePanel({
         refPngBase64 = await imageUrlToPng512Base64(activeCharacter.imageUrl);
       }
 
+      const remoteModel = REMOTE_IMAGE_MODELS[engineId];
+      if (remoteModel) {
+        const isRemoteEdit = mode === 'restyle' && Boolean(remoteModel.edit);
+        const remoteSeed = randomizeSeed
+          ? Math.floor(Math.random() * 1_000_000_000)
+          : seed;
+        const createResponse = await fetch('/api/ai/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            task: isRemoteEdit ? 'image.edit' : 'image.generate',
+            modelId: isRemoteEdit ? remoteModel.edit : remoteModel.generate,
+            prompt: enhancedPrompt,
+            parameters: {
+              width: 1024,
+              height: aspectRatio === '9:16' ? 1024 : 576,
+              steps: remoteModel.steps,
+              seed: remoteSeed,
+            },
+            referenceImage: refPngBase64
+              ? { data: `data:image/png;base64,${refPngBase64}`, mimeType: 'image/png' }
+              : undefined,
+          }),
+        });
+        const createdJob = await readApiJson<{
+          id: string;
+          status: 'queued' | 'processing' | 'completed' | 'failed';
+          progress: number | null;
+          error?: string;
+          resultUrl?: string;
+        }>(createResponse, 'Remote image job');
+        if (!createResponse.ok) {
+          setErrorMsg(createdJob.error || 'Could not start remote image generation.');
+          return;
+        }
+
+        let job = createdJob;
+        const pollUntil = Date.now() + 10 * 60 * 1000;
+        while (
+          (job.status === 'queued' || job.status === 'processing') &&
+          Date.now() < pollUntil
+        ) {
+          setStatusMessage(
+            job.status === 'queued'
+              ? 'Remote image job queued…'
+              : `Remote image generation running${job.progress === null ? '…' : ` · ${job.progress}%`}`
+          );
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+          const statusResponse = await fetch(`/api/ai/jobs/${encodeURIComponent(createdJob.id)}`);
+          job = await readApiJson<typeof job>(statusResponse, 'Remote image job status');
+          if (!statusResponse.ok) {
+            setErrorMsg(job.error || 'Could not retrieve remote image job status.');
+            return;
+          }
+        }
+
+        if (job.status === 'failed') {
+          setErrorMsg(job.error || 'Remote image generation failed.');
+          return;
+        }
+        if (job.status !== 'completed' || !job.resultUrl) {
+          setErrorMsg('Remote image generation timed out before returning an image.');
+          return;
+        }
+
+        const take: GeneratedTake = {
+          id: `take-${Date.now()}-remote`,
+          imageDataUrl: job.resultUrl,
+          modelLabel: activeEngine.name,
+          prompt: activePrompt,
+          seed: remoteSeed,
+          style,
+          aspectRatio,
+          engineId,
+          timingsMs: {
+            tokenizeAndEncode: 0,
+            vaeEncode: 0,
+            unetDenoise: 0,
+            vaeDecode: 0,
+            total: 0,
+          },
+        };
+        setRecentTakes((prev) => [take, ...prev].slice(0, 8));
+        addTakeToStudio(take, true);
+        setStatusMessage(`Remote image generated with ${activeEngine.name}.`);
+        return;
+      }
+
       const res = await fetch('/api/media/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -485,7 +669,21 @@ export function GeneratePanel({
           referenceImagePngBase64: refPngBase64,
         }),
       });
-      const data = await res.json();
+      const data = await readApiJson<{
+        error?: string;
+        images?: Array<{
+          imageDataUrl: string;
+          seed?: number;
+          modelLabel?: string;
+          timingsMs?: GeneratedTake['timingsMs'];
+          tokenStats?: GeneratedTake['tokenStats'];
+        }>;
+        imageDataUrl?: string;
+        seed?: number;
+        model?: string;
+        timingsMs?: GeneratedTake['timingsMs'];
+        tokenStats?: GeneratedTake['tokenStats'];
+      }>(res, 'Image generation');
       if (!res.ok) {
         setErrorMsg(data.error || 'Local diffusion inference failed.');
         return;
@@ -497,10 +695,10 @@ export function GeneratePanel({
         modelLabel?: string;
         timingsMs?: GeneratedTake['timingsMs'];
         tokenStats?: GeneratedTake['tokenStats'];
-      }> =
-        Array.isArray(data.images) && data.images.length > 0
-          ? data.images
-          : [
+      }> = Array.isArray(data.images) && data.images.length > 0
+        ? data.images
+        : typeof data.imageDataUrl === 'string' && data.imageDataUrl.length > 0
+          ? [
               {
                 imageDataUrl: data.imageDataUrl,
                 seed: data.seed,
@@ -508,7 +706,16 @@ export function GeneratePanel({
                 timingsMs: data.timingsMs,
                 tokenStats: data.tokenStats,
               },
-            ];
+            ]
+          : [];
+
+      if (
+        returnedTakes.length === 0 ||
+        returnedTakes.some((take) => typeof take.imageDataUrl !== 'string' || !take.imageDataUrl)
+      ) {
+        setErrorMsg('The image service returned no usable image data.');
+        return;
+      }
 
       const formattedTakes: GeneratedTake[] = returnedTakes.map((t, idx) => ({
         id: `take-${Date.now()}-${idx}`,
@@ -576,7 +783,7 @@ export function GeneratePanel({
               className="text-xs font-semibold text-[#F1F3F5] flex items-center gap-1.5"
             >
               <Cpu className="w-3.5 h-3.5 text-[#E5A93C]" />
-              <span>Local Neural Pipeline</span>
+              <span>Image Model</span>
             </label>
             <span className="text-[11px] text-[#8E96A4] truncate">
               {activeEngine.ingredientsSummary}
@@ -855,35 +1062,51 @@ export function GeneratePanel({
           </label>
           <select
             id="gen-aspect"
-            value={aspectRatio}
+            value={mode === 'video' && aspectRatio === '1:1' ? '16:9' : aspectRatio}
             onChange={(e) => setAspectRatio(e.target.value as AspectRatio)}
             className="bg-[#0E1013] border border-white/10 rounded-md px-2 py-1.5 text-xs text-[#F1F3F5] focus:outline-none focus:border-[#E5A93C]"
           >
             <option value="16:9">16:9 Widescreen</option>
             <option value="9:16">9:16 Vertical</option>
-            <option value="1:1">1:1 Square (Full 512px)</option>
+            <option value="1:1" disabled={mode === 'video'}>
+              1:1 Square (Image only)
+            </option>
           </select>
         </div>
 
         <div className="flex flex-col gap-1">
           <label
-            htmlFor="gen-quality"
+            htmlFor={mode === 'video' ? 'video-resolution' : 'gen-quality'}
             className="text-xs font-medium text-[#9BA1AE]"
           >
-            Image Quality
+            {mode === 'video' ? 'Video Resolution' : 'Image Quality'}
           </label>
-          <select
-            id="gen-quality"
-            value={qualityPreset}
-            onChange={(e) => setQualityPreset(e.target.value)}
-            className="bg-[#0E1013] border border-white/10 rounded-md px-2 py-1.5 text-xs text-[#F1F3F5] focus:outline-none focus:border-[#E5A93C]"
-          >
-            {QUALITY_PRESETS.map((q) => (
-              <option key={q.id} value={q.id}>
-                {q.label}
-              </option>
-            ))}
-          </select>
+          {mode === 'video' ? (
+            <select
+              id="video-resolution"
+              value={videoResolution}
+              onChange={(e) =>
+                setVideoResolution(e.target.value as '720p' | '1080p')
+              }
+              className="bg-[#0E1013] border border-white/10 rounded-md px-2 py-1.5 text-xs text-[#F1F3F5] focus:outline-none focus:border-[#E5A93C]"
+            >
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          ) : (
+            <select
+              id="gen-quality"
+              value={qualityPreset}
+              onChange={(e) => setQualityPreset(e.target.value)}
+              className="bg-[#0E1013] border border-white/10 rounded-md px-2 py-1.5 text-xs text-[#F1F3F5] focus:outline-none focus:border-[#E5A93C]"
+            >
+              {QUALITY_PRESETS.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.label}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {mode === 'video' ? (
@@ -902,8 +1125,7 @@ export function GeneratePanel({
             >
               <option value={4}>4s</option>
               <option value={6}>6s</option>
-              <option value={10}>10s</option>
-              <option value={15}>15s</option>
+              <option value={8}>8s</option>
             </select>
           </div>
         ) : (

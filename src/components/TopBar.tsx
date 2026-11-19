@@ -1,4 +1,5 @@
 import { WorkspaceView } from '../types/studio';
+import { SystemStatus } from './SystemStatus';
 
 interface TopBarProps {
   activeView: WorkspaceView;
@@ -44,7 +45,8 @@ export function TopBar({ activeView, onSelectView, onOpenExport }: TopBarProps) 
         })}
       </nav>
 
-      <div className="flex items-center shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
+        <SystemStatus />
         <button
           type="button"
           onClick={onOpenExport}

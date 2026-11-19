@@ -118,6 +118,71 @@ export const IMAGE_ENGINES: ImageEngineSpec[] = [
     defaultGuidance: 3.0,
     maxGuidance: 10.0,
   },
+  {
+    id: 'remote-zimage-turbo',
+    name: 'Z-Image-Turbo (Remote)',
+    architecture: 'Remote ZImagePipeline · Tongyi-MAI/Z-Image-Turbo',
+    ingredientsSummary: 'Remote inference · HF Endpoint or RunPod',
+    summary:
+      'Runs on a configured Hugging Face Inference Endpoint or RunPod worker. No model weights are loaded in Codespaces.',
+    supportsNegativePrompt: false,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: false,
+    defaultGuidance: 0,
+    maxGuidance: 0,
+  },
+  {
+    id: 'remote-flux-klein',
+    name: 'FLUX.2 Klein 4B (Remote)',
+    architecture: 'Remote Flux2KleinPipeline · black-forest-labs/FLUX.2-klein-4B',
+    ingredientsSummary: 'Remote inference · HF Endpoint or RunPod',
+    summary:
+      'Runs on configured remote infrastructure. No FLUX weights are loaded in Codespaces.',
+    supportsNegativePrompt: false,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: false,
+    defaultGuidance: 0,
+    maxGuidance: 0,
+  },
+  {
+    id: 'remote-flux-klein-edit',
+    name: 'FLUX.2 Klein Edit (Remote)',
+    architecture: 'Remote image edit · black-forest-labs/FLUX.2-klein-4B',
+    ingredientsSummary: 'Remote image edit · HF Endpoint or RunPod',
+    summary:
+      'Edits a reference frame on the configured remote worker. The source image is sent to that provider only when you submit.',
+    supportsNegativePrompt: false,
+    supportsCharacterImg2Img: true,
+    supportsGuidance: false,
+    defaultGuidance: 0,
+    maxGuidance: 0,
+  },
+  {
+    id: 'remote-qwen-2512',
+    name: 'Qwen-Image-2512 (Remote)',
+    architecture: 'Remote QwenImagePipeline · Qwen/Qwen-Image-2512',
+    ingredientsSummary: 'Remote inference · HF Endpoint or RunPod',
+    summary:
+      'Runs on configured remote infrastructure with production GPU memory. No Qwen weights are loaded in Codespaces.',
+    supportsNegativePrompt: false,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: false,
+    defaultGuidance: 0,
+    maxGuidance: 0,
+  },
+  {
+    id: 'remote-qwen-2512-lightning',
+    name: 'Qwen-Image-2512 Lightning (Remote)',
+    architecture: 'Remote Qwen base + Lightning LoRA',
+    ingredientsSummary: 'Remote inference · base model required',
+    summary:
+      'Uses the Lightning adapter with Qwen-Image-2512 loaded on the remote worker. No weights are loaded in Codespaces.',
+    supportsNegativePrompt: false,
+    supportsCharacterImg2Img: false,
+    supportsGuidance: false,
+    defaultGuidance: 0,
+    maxGuidance: 0,
+  },
 ];
 
 export const CAMERA_FRAMING_OPTIONS = [

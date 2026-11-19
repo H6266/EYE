@@ -38,7 +38,12 @@ export type ImageEngineId =
   | 'python-flux-klein'
   | 'python-zimage-base'
   | 'python-qwen-2512'
-  | 'python-moss-sft';
+  | 'python-moss-sft'
+  | 'remote-zimage-turbo'
+  | 'remote-flux-klein'
+  | 'remote-flux-klein-edit'
+  | 'remote-qwen-2512'
+  | 'remote-qwen-2512-lightning';
 
 export const PYTHON_ENGINE_IDS: ImageEngineId[] = [
   'python-zimage-turbo',
@@ -88,6 +93,7 @@ export interface TimelineClip {
   volume: number;
   fadeIn: number;
   fadeOut: number;
+  transcript?: string;
   subtitleText?: string;
   subtitleSpeaker?: string;
   subtitleStyle?: SubtitleStyle;
